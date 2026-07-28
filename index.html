@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="PE Prompt 评测对比工具：从飞书表格读取数据，对多模型生成结果做并排对比、问题标签标注与划线分析。">
+  <meta name="color-scheme" content="light">
+  <title>PE Prompt 评测对比</title>
+  <link rel="stylesheet" href="assets/styles.css">
+  <script defer src="assets/app.js"></script>
+</head>
+<body>
+  <noscript>
+    <div style="padding:24px;font-family:system-ui,sans-serif;color:#1f2937;">
+      此页面依赖 JavaScript 渲染，请在浏览器中启用 JavaScript 后刷新。
+    </div>
+  </noscript>
+
+  <div class="app-shell">
+    <header>
+      <div class="topbar">
+        <div class="brand">
+          <strong>PE Prompt 对比评测</strong>
+          <span>筛选结果、查看详情、记录问题分析</span>
+          <form class="source-config" id="sourceForm" aria-label="飞书表格链接配置">
+            <select id="sourceSelect" aria-label="已保存飞书表格"></select>
+            <button type="button" id="sourceDeleteBtn" title="删除当前数据源" aria-label="删除当前数据源">删除</button>
+            <input id="sourceUrlInput" type="url" placeholder="粘贴飞书表格或多维表格链接">
+            <button type="submit">加载</button>
+          </form>
+          <div class="qc-bar" id="qcBar" hidden aria-label="质检作业模式">
+            <div id="qcReviewerDisplay" class="qc-reviewer-display" hidden>
+              <span class="reviewer-name">质检人: <strong id="qcReviewerName"></strong></span>
+              <button type="button" id="qcSwitchUserBtn" class="text-btn">切换</button>
+            </div>
+            <label class="qc-mode-toggle"><input type="checkbox" id="qcModeToggle"> 质检模式</label>
+          </div>
+        </div>
+
+        <div class="filters" role="search" aria-label="顶部筛选区">
+          <select id="tagFilter" aria-label="标签筛选" title="标签筛选"></select>
+          <select id="searchScopeFilter" aria-label="检索范围" title="检索范围"></select>
+          <div class="search-stack">
+            <input class="search" id="searchInput" type="search" placeholder="搜索原始输入内容">
+          </div>
+          <div class="issue-filter-row" aria-label="问题标签筛选">
+            <select id="issueModelFilter" aria-label="问题标签模型筛选" title="问题标签模型"></select>
+            <select id="adjustmentFlagFilter" aria-label="调整标识筛选" title="调整标识"></select>
+            <select id="annotationStatusFilter" aria-label="标注状态筛选" title="标注状态"></select>
+            <select id="issueLabelFilter" aria-label="问题标签筛选" title="问题标签"></select>
+            <select id="qcStatusFilter" aria-label="质检状态筛选" title="质检状态" hidden></select>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="main">
+      <section id="listView" class="view active" aria-label="筛选结果列表页">
+        <div class="summary-row">
+          <span class="summary-left">
+            <span class="sort-control">
+              <label for="sortModeSelect">排序</label>
+              <select id="sortModeSelect" aria-label="排序方式">
+                <option value="ordered">顺序排列</option>
+                <option value="intervalRandom">随机排序</option>
+              </select>
+            </span>
+            <span id="listSummary"></span>
+          </span>
+          <span class="summary-actions">
+            <button type="button" id="distributionBtn">问题分布</button>
+            <span class="view-switch" id="viewSwitch" role="tablist" aria-label="列表视图切换">
+              <button type="button" data-list-view="card" role="tab">简略视图</button>
+              <button type="button" data-list-view="waterfall" role="tab">详细视图</button>
+            </span>
+            <span>列表展示 prompt_cn，点击任意条进入详情页</span>
+          </span>
+        </div>
+        <div id="resultList" class="list"></div>
+        <nav id="pagination" class="pagination" aria-label="列表分页"></nav>
+      </section>
+
+      <section id="distributionView" class="view" aria-label="问题分布页">
+        <div class="distribution-toolbar">
+          <div>
+            <strong>问题分布</strong>
+            <span id="distributionSummary"></span>
+          </div>
+          <div class="distribution-controls">
+            <div class="distribution-model-picker" aria-label="问题分布模型选择">
+              <select id="distributionLeftModel" aria-label="左侧模型" title="左侧模型"></select>
+              <span aria-hidden="true">对比</span>
+              <select id="distributionRightModel" aria-label="右侧模型" title="右侧模型"></select>
+            </div>
+            <button type="button" id="distributionSwapBtn">交换比较顺序</button>
+            <button type="button" id="distributionBackBtn">返回列表</button>
+          </div>
+        </div>
+        <div id="issueCompareChart" class="distribution-compare"></div>
+        <div id="qcStatsView" class="qc-stats" hidden></div>
+      </section>
+
+      <section id="detailView" class="view" aria-label="详情页">
+        <button class="side-nav left" id="sidePrevBtn" type="button" title="上一条" aria-label="上一条">‹</button>
+        <button class="side-nav right" id="sideNextBtn" type="button" title="下一条" aria-label="下一条">›</button>
+
+        <div class="detail-toolbar">
+          <button id="backBtn" type="button">返回列表</button>
+          <div class="detail-title" id="detailTitle"></div>
+          <div>
+            <button id="prevBtn" type="button" title="上一条">上一条</button>
+            <button id="nextBtn" type="button" title="下一条">下一条</button>
+          </div>
+        </div>
+
+        <div class="detail-layout">
+          <div class="detail-sidebar">
+            <aside class="panel origin-panel" aria-label="原始 prompt_cn">
+              <div class="panel-head">
+                <span>prompt_cn</span>
+                <span class="chip" id="originIndex"></span>
+              </div>
+              <div class="panel-body" id="originContent"></div>
+            </aside>
+
+            <section class="tag-panel" id="issuePanel" aria-label="问题标签与问题分析">
+              <div class="tag-chips" id="detailMetaTags"></div>
+              <div class="issue-grid" id="issueGrid"></div>
+            </section>
+            
+            <div id="qcPanelContainer"></div>
+          </div>
+
+          <div class="detail-main">
+            <section class="panel" aria-label="多模型对比">
+              <div class="compare-grid" id="compareGrid"></div>
+            </section>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <div id="imageViewer" class="image-viewer" role="dialog" aria-modal="true" aria-label="图片放大预览">
+    <button id="closeImageViewer" type="button" title="关闭预览" aria-label="关闭预览">×</button>
+    <img id="viewerImage" src="" alt="放大图片">
+  </div>
+
+  <div id="annotationPopover" class="annotation-popover" role="dialog" aria-label="PE Prompt 划线备注">
+    <div class="popover-title" id="annotationTitle">新增划线备注</div>
+    <textarea id="annotationReason" placeholder="填写错误理由"></textarea>
+    <div class="annotation-actions">
+      <button type="button" class="danger" id="deleteAnnotationBtn">取消划线</button>
+      <button type="button" id="cancelAnnotationBtn">关闭</button>
+      <button type="button" id="saveAnnotationBtn">保存</button>
+    </div>
+  </div>
+
+  <div id="qcLoginOverlay" class="modal-overlay" hidden>
+    <div class="modal-dialog login-modal">
+      <div class="modal-header">
+        <h2>登录质检系统</h2>
+      </div>
+      <div class="modal-body">
+        <p class="login-desc">请输入您的真实姓名，用于记录质检结果和分配抽检任务。</p>
+        <form id="qcLoginForm">
+          <input type="text" id="qcLoginNameInput" placeholder="请输入您的姓名" required autocomplete="off">
+          <div class="modal-actions">
+            <button type="button" id="qcLoginCancelBtn">取消</button>
+            <button type="submit" class="primary">进入质检</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "activeUrl": "",
+  "sources": [
+    {
+      "type": "sheet",
+      "title": "示例-飞书表格",
+      "url": "https://your-domain.larkoffice.com/sheets/<spreadsheet_token>",
+      "sheetId": "<sheet_id>",
+      "rowCount": 623
+    },
+    {
+      "type": "base",
+      "title": "示例-多维表格",
+      "url": "https://your-domain.larkoffice.com/base/<base_token>?table=<table_id>&view=<view_id>",
+      "baseToken": "<base_token>",
+      "tableId": "<table_id>",
+      "viewId": "<view_id>",
+      "rowCount": 623
+    }
+  ]
+}

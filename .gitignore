@@ -1,0 +1,16 @@
+# Python virtual environment
+venv/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# 运行时数据源配置（写死连接不入库，参考 lark_sources.example.json）
+lark_sources.json
+

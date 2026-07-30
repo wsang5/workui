@@ -1,3 +1,10 @@
+"""Deprecated local lark-cli backend for PE Prompt Reviewer.
+
+The maintained runtime is now ``spark-app/server.js`` (Node.js / Express).
+This file remains only as a migration reference. Set
+``ALLOW_LEGACY_PY_SERVER=1`` if you intentionally need to run it.
+"""
+
 import json
 import os
 import re
@@ -14,6 +21,12 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import qc_sampling
+
+if os.environ.get("ALLOW_LEGACY_PY_SERVER") != "1":
+    raise SystemExit(
+        "lark_server.py is deprecated. Use spark-app/server.js instead. "
+        "Set ALLOW_LEGACY_PY_SERVER=1 to run the legacy Python service."
+    )
 
 
 class ConflictError(Exception):

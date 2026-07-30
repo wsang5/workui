@@ -1,7 +1,17 @@
     // 页面启动时通过本地服务从飞书表格拉取数据；问题分析按表头列名写回对应实验组列。
+    const appBasePath = window.location.pathname.match(/^\/app\/app_[^/]+/)?.[0] || "";
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      if (typeof input === "string" && input.startsWith("/api/")) {
+        input = `${appBasePath}${input}`;
+      }
+      return nativeFetch(input, init);
+    };
+
     let rows = [];
     let sourceConfig = { activeUrl: "", sources: [] };
     let activeSource = { title: "飞书表格", url: "" };
+    const staticPreviewMode = new URLSearchParams(window.location.search).get("preview") === "ab-work";
 
     const pageSize = 100;
     const randomSortInterval = 5;
@@ -50,7 +60,15 @@
       qcStatus: "全部",
       supportsQC: false,
       qcStats: null,
-      qcConfig: { T: 0.80, R1: 0.30, R2: 0.50 }
+      qcConfig: { T: 0.80, R1: 0.30, R2: 0.50 },
+      abImageZoom: 1,
+      abImageViews: {},
+      abImageDrag: null,
+      abImageSuppressClick: false,
+      selectedAbReferenceKey: "",
+      abViewMode: "compare",
+      abReferenceGroupId: "",
+      abReferenceViews: {}
     };
 
     const qcStatusOptions = ["全部", "未检", "已检", "不通过"];
@@ -127,8 +145,170 @@
     async function init() {
       restoreQcUiState();
       bindEvents();
+      if (staticPreviewMode) {
+        loadStaticWorkPreview();
+        return;
+      }
       await loadSources();
       await Promise.all([loadLabelTaxonomy(), loadRowsFromLark()]);
+    }
+
+    function loadStaticWorkPreview() {
+      const trumpPortraitImage = "https://upload.wikimedia.org/wikipedia/commons/5/56/Donald_Trump_official_portrait.jpg";
+      const trumpSpeechImage = "https://upload.wikimedia.org/wikipedia/commons/4/40/Donald_Trump_by_Gage_Skidmore_3.jpg";
+      const xiPortraitImage = "https://upload.wikimedia.org/wikipedia/commons/3/32/Xi_Jinping_2019.jpg";
+      const modelAImage = trumpSpeechImage;
+      const modelBImage = trumpPortraitImage;
+      const overallReferenceImage = trumpSpeechImage;
+      const layoutReferenceImage = "https://upload.wikimedia.org/wikipedia/commons/5/56/Donald_Trump_official_portrait.jpg";
+      const topicReferenceImage = trumpSpeechImage;
+      const factReferenceImage = xiPortraitImage;
+      const previewRow = {
+        id: "static-preview",
+        promptId: "preview-001",
+        mode: "ab-eval",
+        c: "用最近特朗普访华的报道，给我做一个新闻界面排版图。",
+        referenceAnswer: "静态作业页面预览：先看整体答案，再按信息正确性逐条核对参考事实。",
+        referenceAnswerBlock: {
+          summary: "顶部展示整体参考图，下面按考点拆分参考事实，便于与模型 A/B 结果对照。",
+          overall: {
+            title: "整体答案",
+            label: "图1",
+            caption: "整体答案参考图：特朗普访华报道应呈现明确新闻场景、外交元素和稳定版式。",
+            imageUrl: overallReferenceImage,
+            evidenceUrl: "https://example.com/reference/overall-answer"
+          },
+          sections: [
+            {
+              title: "信息正确性",
+              items: [
+                {
+                  label: "图2",
+                  text: "主题应聚焦特朗普访华外交事件，画面包含中美元素、会谈或抵达场景。"
+                },
+                {
+                  text: "新闻页面应至少包含标题区、正文区和主图区域，整体像新闻报道而非纯海报。"
+                },
+                {
+                  label: "图3",
+                  text: "涉及时间、地点、人物的内容需要可被真实报道或资料支撑。"
+                }
+              ]
+            }
+          ]
+        },
+        reviewer: "静态预览",
+        verdictOptions: ["模型A", "模型B", "无法区分"],
+        criteria: [
+          { id: "c1", title: "指令遵循", column: "A", verdict: "模型A" },
+          { id: "c2", title: "信息正确性", column: "B", verdict: "无法区分" },
+          { id: "c3", title: "结构", column: "C", verdict: "模型B" },
+          { id: "c4", title: "美感", column: "D", verdict: "模型B" },
+          { id: "c5", title: "整体", column: "E", verdict: "模型B" }
+        ],
+        promptGroups: [
+          {
+            id: "modelA",
+            label: "模型A",
+            resultLabel: "模型A 作业",
+            result: "模型A 生成了偏现场照片风格的特朗普访华图。",
+            imageTokens: [],
+            imageUrls: [modelAImage],
+            checkpointGroups: [
+              {
+                dimension: "指令遵循",
+                checkpoints: [
+                  {
+                    text: "画面为新闻界面版式（至少含标题、正文、配图位）",
+                    referenceImage: layoutReferenceImage,
+                    evidenceUrl: "https://example.com/reference/news-layout"
+                  },
+                  {
+                    text: "主题聚焦特朗普访华事件",
+                    referenceImage: topicReferenceImage,
+                    evidenceUrl: "https://example.com/reference/trump-visit"
+                  }
+                ]
+              },
+              {
+                dimension: "信息正确性",
+                checkpoints: [
+                  {
+                    text: "特朗普访华相关内容是否符合 2026 年 5 月 12 日至 15 日期间的真实情况",
+                    referenceImage: factReferenceImage,
+                    evidenceUrl: "https://example.com/reference/fact-check"
+                  }
+                ]
+              },
+              {
+                dimension: "结构",
+                checkpoints: [
+                  "标题、导语、正文和配图之间的层级关系清晰"
+                ]
+              },
+              {
+                dimension: "美感",
+                checkpoints: [
+                  "页面具有新闻界面的视觉质感，排版协调且易读"
+                ]
+              }
+            ]
+          },
+          {
+            id: "modelB",
+            label: "模型B",
+            resultLabel: "模型B 作业",
+            result: "模型B 生成了偏新闻页面版式的特朗普访华图。",
+            imageTokens: [],
+            imageUrls: [modelBImage],
+            checkpointGroups: [
+              {
+                dimension: "指令遵循",
+                checkpoints: [
+                  {
+                    text: "版式是否仍然保持新闻页结构，而不是海报或纯视觉稿",
+                    referenceImage: layoutReferenceImage,
+                    evidenceUrl: "https://example.com/reference/news-layout-b"
+                  },
+                  {
+                    text: "是否明确围绕特朗普访华事件组织信息",
+                    referenceImage: topicReferenceImage,
+                    evidenceUrl: "https://example.com/reference/topic-focus"
+                  }
+                ]
+              },
+              {
+                dimension: "信息正确性",
+                checkpoints: [
+                  {
+                    text: "涉及时间、地点、人物的内容是否可被真实报道支撑",
+                    referenceImage: factReferenceImage,
+                    evidenceUrl: "https://example.com/reference/entity-check"
+                  }
+                ]
+              },
+              {
+                dimension: "结构",
+                checkpoints: [
+                  "标题区、正文区、配图区的阅读顺序是否稳定"
+                ]
+              },
+              {
+                dimension: "美感",
+                checkpoints: [
+                  "留白、对齐、字号对比是否更接近可发布新闻页面"
+                ]
+              }
+            ]
+          }
+        ]
+      };
+      rows = [previewRow];
+      state.filtered = rows;
+      state.currentIndex = 0;
+      state.supportsQC = false;
+      activeSource = { title: "静态预览", url: "" };
+      showDetail(0);
     }
 
     async function loadLabelTaxonomy() {
@@ -206,7 +386,7 @@
         $("resultList").innerHTML = `
           <div class="panel">
             <div class="panel-body empty">
-              请通过本地服务打开页面：python3 lark_server.py。错误：${escapeHtml(error.message)}
+              数据源加载失败，请确认 Node 服务、飞书应用凭证和数据源权限正常。错误：${escapeHtml(error.message)}
             </div>
           </div>
         `;
@@ -427,6 +607,10 @@
       $("compareGrid").addEventListener("mouseup", handlePePromptSelection);
       $("compareGrid").addEventListener("click", handlePromptComparisonClick);
       $("compareGrid").addEventListener("change", handlePromptGroupSelection);
+      $("compareGrid").addEventListener("wheel", handleAbImageWheel, { passive: false });
+      $("compareGrid").addEventListener("pointerdown", handleAbImagePointerDown);
+      document.addEventListener("pointermove", handleAbImagePointerMove);
+      document.addEventListener("pointerup", handleAbImagePointerUp);
       $("saveAnnotationBtn").addEventListener("click", saveAnnotationFromPopover);
       $("deleteAnnotationBtn").addEventListener("click", deleteAnnotationFromPopover);
       $("cancelAnnotationBtn").addEventListener("click", closeAnnotationPopover);
@@ -446,6 +630,12 @@
       document.addEventListener("click", (event) => {
         const image = event.target.closest(".media-grid img, .row-thumb img, .mini-image");
         if (!image) return;
+        if (state.abImageSuppressClick && image.closest(".ab-image-viewport")) {
+          event.preventDefault();
+          event.stopPropagation();
+          state.abImageSuppressClick = false;
+          return;
+        }
         openImageViewer(image.src, image.alt);
       });
 
@@ -817,6 +1007,13 @@
       if (index < 0 || index >= state.filtered.length) return;
       if ($("listView").classList.contains("active")) rememberListPosition(state.filtered[index]);
       state.currentIndex = index;
+      state.selectedAbReferenceKey = "";
+      state.abViewMode = "compare";
+      state.abReferenceGroupId = "";
+      state.abReferenceViews = {};
+      state.abImageViews = {};
+      state.abImageDrag = null;
+      state.abImageSuppressClick = false;
       $("listView").classList.remove("active");
       $("distributionView").classList.remove("active");
       $("detailView").classList.add("active");
@@ -868,6 +1065,7 @@
 
     function renderDetail() {
       const row = currentRow();
+      $("detailView").classList.toggle("ab-detail", row.mode === "ab-eval");
       const promptIdText = String(row.promptId || "").trim();
       $("detailTitle").textContent = `${promptIdText ? `prompt_id：${promptIdText} · ` : ""}${state.currentIndex + 1} / ${state.filtered.length}`;
       $("originIndex").textContent = row.id;
@@ -884,6 +1082,7 @@
         return;
       }
 
+      renderAbReferencePanel(null);
       renderContent("originContent", row.c);
       renderPromptComparison(row);
       $("detailMetaTags").innerHTML = renderTagChips(row);
@@ -892,16 +1091,69 @@
     }
 
     function cellImageUrl(token, spec = "big") {
-      return `/api/cell-image?token=${encodeURIComponent(token)}&spec=${encodeURIComponent(spec)}`;
+      return `${appBasePath}/api/cell-image?token=${encodeURIComponent(token)}&spec=${encodeURIComponent(spec)}`;
     }
 
-    function renderAbImages(container, tokens, fallbackText) {
+    function renderAbImages(container, tokens, fallbackText, group = null) {
       if (!container) return;
-      const list = Array.isArray(tokens) ? tokens : [];
+      const viewKey = group?.id || "default";
+      const viewStyle = abImageViewStyle(viewKey);
+      const referenceView = group?.id ? state.abReferenceViews[group.id] : null;
+      if (referenceView) {
+        const row = currentRow();
+        const sourceGroup = abEvalRelationGroups(row).find((item) => item.id === referenceView.sourceGroupId);
+        const items = sourceGroup ? referenceQueueItems(row, sourceGroup) : [];
+        container.innerHTML = `
+          <div class="ab-reference-result-head">
+            <span>${escapeHtml(sourceGroup?.label || "模型")} · 参考答案</span>
+            <button type="button" data-action="restore-ab-result" data-group-id="${escapeAttr(group.id)}">返回模型图</button>
+          </div>
+          <div class="ab-reference-waterfall">
+            ${items.map((item) => {
+              const expanded = item.key === referenceView.activeKey;
+              return `
+                <article class="ab-reference-accordion-item ${expanded ? "expanded" : ""}">
+                  <button type="button" class="ab-reference-accordion-trigger" data-action="select-ab-reference" data-target-group-id="${escapeAttr(group.id)}" data-source-group-id="${escapeAttr(sourceGroup?.id || "")}" data-reference-key="${escapeAttr(item.key)}" data-reference-image="${escapeAttr(item.imageUrl)}" data-reference-title="${escapeAttr(item.title || `${item.dimension} · 参考答案`)}" aria-expanded="${expanded}">
+                    <span class="ab-reference-accordion-copy">
+                      <strong>${escapeHtml(item.dimension)}</strong>
+                      <span>${escapeHtml(item.text)}</span>
+                    </span>
+                    <span class="ab-reference-accordion-chevron" aria-hidden="true">${expanded ? "−" : "+"}</span>
+                  </button>
+                  ${item.key.endsWith(":overall") ? "" : `<textarea class="ab-image-checkpoint-edit ab-reference-accordion-edit" rows="1" aria-label="作业人确认修改">${escapeHtml(item.worker || item.text || "待确认")}</textarea>`}
+                  ${expanded ? `
+                    <div class="ab-reference-accordion-body">
+                      ${item.imageUrl ? `<img src="${escapeAttr(item.imageUrl)}" alt="${escapeAttr(item.title || `${item.dimension}参考图`)}" loading="lazy" decoding="async">` : `<div class="empty">暂无参考答案图</div>`}
+                      ${item.evidenceUrl ? `<a class="ab-reference-evidence-link" href="${escapeAttr(item.evidenceUrl)}" target="_blank" rel="noopener">查看依据链接</a>` : ""}
+                    </div>
+                  ` : ""}
+                </article>
+              `;
+            }).join("") || `<div class="empty">暂无参考答案</div>`}
+          </div>
+        `;
+        return;
+      }
+      const tokenList = Array.isArray(tokens) ? tokens : [];
+      const directImageList = Array.isArray(group?.imageUrls) ? group.imageUrls : [];
+      const list = [
+        ...tokenList.map((token) => ({
+          src: cellImageUrl(token),
+          token,
+          alt: "模型结果图，滚轮缩放，放大后拖动查看局部"
+        })),
+        ...directImageList.map((url, index) => ({
+          src: String(url || ""),
+          token: "",
+          alt: `${group?.label || "模型"} 测试图 ${index + 1}，滚轮缩放，放大后拖动查看局部`
+        })).filter((item) => item.src)
+      ];
       if (list.length) {
         container.innerHTML = `
-          <div class="media-grid">
-            ${list.map((token) => `<img src="${escapeAttr(cellImageUrl(token))}" alt="模型结果图，点击放大查看" loading="lazy" decoding="async" title="点击放大查看" data-image-token="${escapeAttr(token)}" onerror="this.alt='图片加载失败'; this.style.minHeight='120px';">`).join("")}
+          <div class="ab-image-viewport ${abImageView(viewKey).zoom > 1 ? "is-zoomed" : ""}" data-ab-image-view-key="${escapeAttr(viewKey)}" style="${viewStyle}">
+            <div class="media-grid ab-zoom-grid">
+              ${list.map((item) => `<img src="${escapeAttr(item.src)}" alt="${escapeAttr(item.alt)}" loading="lazy" decoding="async" title="滚轮缩放，放大后拖动查看局部" ${item.token ? `data-image-token="${escapeAttr(item.token)}"` : ""} draggable="false" onerror="this.alt='图片加载失败'; this.style.minHeight='120px';">`).join("")}
+            </div>
           </div>
         `;
         return;
@@ -909,26 +1161,168 @@
       renderContentElement(container, fallbackText);
     }
 
+    function abImageView(key) {
+      const viewKey = key || "default";
+      if (!state.abImageViews[viewKey]) state.abImageViews[viewKey] = { zoom: 1, panX: 0, panY: 0 };
+      return state.abImageViews[viewKey];
+    }
+
+    function abImageViewStyle(key) {
+      const view = abImageView(key);
+      return `--ab-image-zoom:${Number(view.zoom || 1).toFixed(3)};--ab-image-pan-x:${Number(view.panX || 0).toFixed(1)}px;--ab-image-pan-y:${Number(view.panY || 0).toFixed(1)}px`;
+    }
+
+    function clampAbImagePan(viewport, zoom, panX, panY) {
+      const rect = viewport?.getBoundingClientRect?.();
+      if (!rect || zoom <= 1) return { panX: 0, panY: 0 };
+      const maxX = Math.max(0, rect.width * (zoom - 1) / 2);
+      const maxY = Math.max(0, rect.height * (zoom - 1) / 2);
+      return {
+        panX: Math.max(-maxX, Math.min(maxX, panX)),
+        panY: Math.max(-maxY, Math.min(maxY, panY))
+      };
+    }
+
+    function syncAbImageView(key) {
+      const viewKey = key || "default";
+      const view = abImageView(viewKey);
+      document.querySelectorAll(`.ab-image-viewport[data-ab-image-view-key="${CSS.escape(viewKey)}"]`).forEach((viewport) => {
+        viewport.style.setProperty("--ab-image-zoom", Number(view.zoom || 1).toFixed(3));
+        viewport.style.setProperty("--ab-image-pan-x", `${Number(view.panX || 0).toFixed(1)}px`);
+        viewport.style.setProperty("--ab-image-pan-y", `${Number(view.panY || 0).toFixed(1)}px`);
+        viewport.classList.toggle("is-zoomed", Number(view.zoom || 1) > 1.01);
+        viewport.closest(".ab-eval-col")?.classList.toggle("image-zooming", Number(view.zoom || 1) > 1.01);
+      });
+      document.querySelectorAll("[data-role='ab-zoom-label']").forEach((el) => {
+        el.textContent = `${Math.round(Number(view.zoom || 1) * 100)}%`;
+      });
+    }
+
+    function handleAbImageWheel(event) {
+      const viewport = event.target.closest?.(".ab-image-viewport");
+      const image = event.target.closest?.(".ab-image-viewport img");
+      if (!viewport || !image || !$("detailView").classList.contains("ab-detail")) return;
+      event.preventDefault();
+      const direction = event.deltaY < 0 ? 1 : -1;
+      const step = event.shiftKey ? 0.30 : 0.15;
+      const key = viewport.dataset.abImageViewKey || "default";
+      const view = abImageView(key);
+      const oldZoom = Number(view.zoom || 1);
+      const nextZoom = Math.min(4, Math.max(1, oldZoom + direction * step));
+      const rect = viewport.getBoundingClientRect();
+      const offsetX = event.clientX - rect.left - rect.width / 2;
+      const offsetY = event.clientY - rect.top - rect.height / 2;
+      const ratio = nextZoom / oldZoom;
+      const nextPan = clampAbImagePan(
+        viewport,
+        nextZoom,
+        offsetX - (offsetX - Number(view.panX || 0)) * ratio,
+        offsetY - (offsetY - Number(view.panY || 0)) * ratio
+      );
+      view.zoom = nextZoom;
+      view.panX = nextPan.panX;
+      view.panY = nextPan.panY;
+      state.abImageZoom = nextZoom;
+      syncAbImageView(key);
+    }
+
+    function handleAbImagePointerDown(event) {
+      const viewport = event.target.closest?.(".ab-image-viewport");
+      const image = event.target.closest?.(".ab-image-viewport img");
+      if (!viewport || !image || event.button !== 0 || !$("detailView").classList.contains("ab-detail")) return;
+      const key = viewport.dataset.abImageViewKey || "default";
+      const view = abImageView(key);
+      if (Number(view.zoom || 1) <= 1.01) return;
+      event.preventDefault();
+      state.abImageDrag = {
+        key,
+        startX: event.clientX,
+        startY: event.clientY,
+        baseX: Number(view.panX || 0),
+        baseY: Number(view.panY || 0),
+        moved: false
+      };
+      viewport.classList.add("dragging");
+    }
+
+    function handleAbImagePointerMove(event) {
+      const drag = state.abImageDrag;
+      if (!drag) return;
+      const viewport = document.querySelector(`.ab-image-viewport[data-ab-image-view-key="${CSS.escape(drag.key)}"]`);
+      if (!viewport) return;
+      const view = abImageView(drag.key);
+      const dx = event.clientX - drag.startX;
+      const dy = event.clientY - drag.startY;
+      if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+      const nextPan = clampAbImagePan(viewport, Number(view.zoom || 1), drag.baseX + dx, drag.baseY + dy);
+      view.panX = nextPan.panX;
+      view.panY = nextPan.panY;
+      syncAbImageView(drag.key);
+    }
+
+    function handleAbImagePointerUp() {
+      const drag = state.abImageDrag;
+      if (!drag) return;
+      document.querySelectorAll(".ab-image-viewport.dragging").forEach((viewport) => viewport.classList.remove("dragging"));
+      state.abImageSuppressClick = Boolean(drag.moved);
+      state.abImageDrag = null;
+      if (state.abImageSuppressClick) {
+        window.setTimeout(() => {
+          state.abImageSuppressClick = false;
+        }, 0);
+      }
+    }
+
+    function resetAbImageZoom() {
+      state.abImageZoom = 1;
+      state.abImageViews = {};
+      document.querySelectorAll(".ab-image-viewport").forEach((viewport) => {
+        viewport.style.setProperty("--ab-image-zoom", "1");
+        viewport.style.setProperty("--ab-image-pan-x", "0px");
+        viewport.style.setProperty("--ab-image-pan-y", "0px");
+        viewport.classList.remove("is-zoomed", "dragging");
+        viewport.closest(".ab-eval-col")?.classList.remove("image-zooming");
+      });
+    }
+
     function renderAbEvalDetail(row) {
       renderContent("originContent", row.c || "");
+      renderAbReferencePanel(row);
       renderAbEvalDynamicRelation(row);
 
       const verdicts = row.verdictOptions || ["模型A", "模型B", "无法区分"];
       const criteriaHtml = (row.criteria || []).map((item) => `
-        <div class="ab-criterion" data-column="${escapeAttr(item.column)}">
-          <div class="ab-criterion-title">${escapeHtml(item.title)}</div>
-          <div class="ab-verdict-group" role="radiogroup" aria-label="${escapeAttr(item.title)}">
+        <section class="ab-judge-card" data-column="${escapeAttr(item.column)}" data-reference-key="${escapeAttr(item.title || "")}">
+          <div class="ab-judge-question">两个生成结果在【${escapeHtml(item.title || "该维度")}】上哪个更好</div>
+          <div class="ab-judge-options" role="radiogroup" aria-label="${escapeAttr(item.title)}">
             ${verdicts.map((opt) => `
-              <button type="button" class="ab-verdict ${item.verdict === opt ? "active" : ""}" data-column="${escapeAttr(item.column)}" data-value="${escapeAttr(opt)}" role="radio" aria-checked="${item.verdict === opt}">${escapeHtml(opt)}</button>
+              <button type="button" class="ab-verdict ab-judge-option ${item.verdict === opt ? "active" : ""}" data-column="${escapeAttr(item.column)}" data-value="${escapeAttr(opt)}" role="radio" aria-checked="${item.verdict === opt}">
+                <span class="ab-judge-radio" aria-hidden="true"></span>
+                <span class="ab-judge-label">${escapeHtml(opt)}</span>
+              </button>
             `).join("")}
           </div>
-        </div>
+        </section>
       `).join("");
 
-      $("issueGrid").innerHTML = `<div class="ab-eval-panel">${criteriaHtml}</div>`;
+      $("issueGrid").innerHTML = `
+        <div class="ab-eval-panel">
+          <div class="ab-eval-scroll">${criteriaHtml}</div>
+          <div class="ab-submit-bar">
+            <button type="button" class="ab-submit-btn" data-action="submit-ab-eval">提交当前页判断</button>
+          </div>
+        </div>
+      `;
 
       $("issueGrid").querySelectorAll(".ab-verdict").forEach((btn) => {
         btn.addEventListener("click", () => onAbVerdictClick(row, btn));
+      });
+      $("issueGrid").querySelector("[data-action='submit-ab-eval']")?.addEventListener("click", () => submitAbEvalPage(row));
+      $("issueGrid").querySelectorAll(".ab-judge-card").forEach((card) => {
+        card.addEventListener("click", (event) => {
+          if (event.target.closest(".ab-verdict")) return;
+          selectAbReferenceSection(row, card.dataset.referenceKey || "");
+        });
       });
       $("compareGrid").querySelectorAll('[data-role="ab-remark"]').forEach((ta) => {
         ta.addEventListener("change", () => onAbRemarkChange(row, ta));
@@ -939,6 +1333,115 @@
       } else if ($("qcPanelContainer")) {
         $("qcPanelContainer").innerHTML = "";
       }
+    }
+
+    function submitAbEvalPage(row) {
+      const missing = (row.criteria || []).filter((item) => !String(item.verdict || "").trim());
+      if (missing.length) {
+        toast(`还有 ${missing.length} 个判断未选择`);
+        return;
+      }
+      toast("已提交当前页判断");
+    }
+
+    function normalizeReferenceAnswerData(row) {
+      if (row?.referenceAnswerBlock && typeof row.referenceAnswerBlock === "object") {
+        return row.referenceAnswerBlock;
+      }
+      const reference = String(row?.referenceAnswer || row?.description || "").trim();
+      return reference ? { summary: reference } : null;
+    }
+
+    function normalizeAbReferenceGroupId(row) {
+      const groups = abEvalRelationGroups(row);
+      if (!groups.length) return "";
+      const valid = new Set(groups.map((group) => group.id));
+      if (state.abReferenceGroupId && valid.has(state.abReferenceGroupId)) return state.abReferenceGroupId;
+      return groups[0].id;
+    }
+
+    function activeAbReferenceGroup(row) {
+      const groupId = normalizeAbReferenceGroupId(row);
+      return abEvalRelationGroups(row).find((group) => group.id === groupId) || abEvalRelationGroups(row)[0] || null;
+    }
+
+    function normalizeReferenceSectionKey(value) {
+      return String(value || "").replace(/\s+/g, "").trim();
+    }
+
+    function getSelectedAbReferenceKey(row) {
+      const key = normalizeReferenceSectionKey(state.selectedAbReferenceKey);
+      if (!key) return "";
+      const sections = Array.isArray(normalizeReferenceAnswerData(row)?.sections)
+        ? normalizeReferenceAnswerData(row).sections
+        : [];
+      return sections.some((section) => normalizeReferenceSectionKey(section.title) === key) ? key : "";
+    }
+
+    function isAbReferenceCriterionSelected(title) {
+      return normalizeReferenceSectionKey(title) && normalizeReferenceSectionKey(title) === normalizeReferenceSectionKey(state.selectedAbReferenceKey);
+    }
+
+    function selectAbReferenceSection(row, title) {
+      const nextKey = normalizeReferenceSectionKey(title);
+      state.selectedAbReferenceKey = nextKey === normalizeReferenceSectionKey(state.selectedAbReferenceKey) ? "" : nextKey;
+      renderAbEvalDetail(row);
+    }
+
+    function renderAbReferenceFigure(figure, options = {}) {
+      if (!figure || typeof figure !== "object") return "";
+      const title = String(figure.title || "").trim();
+      const label = String(figure.label || "").trim();
+      const caption = String(figure.caption || figure.text || "").trim();
+      const imageUrl = String(figure.imageUrl || "").trim();
+      const media = imageUrl
+        ? `<img class="ab-reference-image" src="${escapeAttr(imageUrl)}" alt="${escapeAttr(title || caption || label || "参考图")}" loading="lazy" decoding="async">`
+        : `
+          <div class="ab-reference-image placeholder" role="img" aria-label="${escapeAttr(title || caption || label || "参考图占位")}">
+            <span class="ab-reference-image-tag">${escapeHtml(label || "参考图")}</span>
+            <span class="ab-reference-image-note">${escapeHtml(title || "图片待接入")}</span>
+          </div>
+        `;
+      return `
+        <article class="ab-reference-figure ${options.compact ? "compact" : ""}">
+          <div class="ab-reference-figure-media">${media}</div>
+          <div class="ab-reference-figure-info">
+            ${label ? `<span class="ab-reference-kicker">${escapeHtml(label)}</span>` : ""}
+            ${title ? `<div class="ab-reference-figure-title">${escapeHtml(title)}</div>` : ""}
+            ${caption ? `<div class="ab-reference-figure-caption">${escapeHtml(caption)}</div>` : ""}
+          </div>
+        </article>
+      `;
+    }
+
+    function renderAbReferencePoint(item) {
+      if (!item || typeof item !== "object") return "";
+      const text = String(item.text || item.caption || "").trim();
+      const label = String(item.label || "").trim();
+      const imageUrl = String(item.imageUrl || "").trim();
+      return `
+        <div class="ab-reference-point">
+          ${(label || imageUrl) ? `
+            <div class="ab-reference-point-visual">
+              ${renderAbReferenceFigure({
+                title: item.title || "",
+                label,
+                caption: item.visualNote || "",
+                imageUrl
+              }, { compact: true })}
+            </div>
+          ` : ""}
+          <div class="ab-reference-point-text">${text ? escapeHtml(text) : `<span class="placeholder">待补充参考说明</span>`}</div>
+        </div>
+      `;
+    }
+
+    function renderAbReferencePanel(row) {
+      const panel = $("abReferencePanel");
+      if (!panel) return;
+      panel.hidden = false;
+      panel.hidden = true;
+      panel.innerHTML = "";
     }
 
     function renderAbEvalMeta(row) {
@@ -959,7 +1462,8 @@
       return groups.map((group) => ({
         ...group,
         resultLabel: group.resultLabel || `${group.label || "模型"} 作业`,
-        imageTokens: Array.isArray(group.imageTokens) ? group.imageTokens : []
+        imageTokens: Array.isArray(group.imageTokens) ? group.imageTokens : [],
+        imageUrls: Array.isArray(group.imageUrls) ? group.imageUrls : []
       }));
     }
 
@@ -969,34 +1473,319 @@
       return null;
     }
 
-    function renderAbEvalDynamicRelation(row) {
-      const groups = abEvalRelationGroups(row);
-      $("compareGrid").innerHTML = groups.map((group) => {
-        const remark = abRemarkForGroup(row, group);
-        return `
-          <div class="compare-col ab-eval-col" data-group-id="${escapeAttr(group.id)}">
-            <div class="block ab-relation-block">
-              <div class="block-title">
-                <span>${escapeHtml(group.resultLabel)}</span>
-                <span class="chip pe">主表作业 ↔ 模板</span>
+    function imageCheckpointGroups(group) {
+      return Array.isArray(group?.checkpointGroups) && group.checkpointGroups.length
+        ? group.checkpointGroups
+        : [];
+    }
+
+    function overallReferenceItem(row, group) {
+      const overall = normalizeReferenceAnswerData(row)?.overall;
+      if (!overall || typeof overall !== "object") return null;
+      const imageUrl = String(overall.imageUrl || overall.referenceImage || overall.referenceImageUrl || "").trim();
+      const evidenceUrl = String(overall.evidenceUrl || overall.referenceUrl || "").trim();
+      return {
+        key: `${group.id}:overall`,
+        dimension: "整体",
+        text: String(overall.caption || overall.title || "整体参考答案图").trim(),
+        imageUrl,
+        evidenceUrl,
+        title: "整体 · 参考答案"
+      };
+    }
+
+    function referenceQueueItems(row, group) {
+      const overallItem = overallReferenceItem(row, group);
+      const checkpointItems = imageCheckpointGroups(group).flatMap((item) => {
+        const dimension = item.dimension || "考点";
+        return (Array.isArray(item.checkpoints) ? item.checkpoints : []).map((checkpoint, index) => {
+          const data = typeof checkpoint === "object" && checkpoint !== null
+            ? checkpoint
+            : { text: String(checkpoint || "") };
+          return {
+            key: `${group.id}:${dimension}:${index}`,
+            dimension,
+            text: String(data.text || data.title || "").trim(),
+            worker: String(data.workerResult || data.machineResult || data.result || data.text || data.title || "待确认").trim(),
+            imageUrl: String(data.referenceImage || data.referenceImageUrl || "").trim(),
+            evidenceUrl: String(data.referenceUrl || data.evidenceUrl || "").trim()
+          };
+        });
+      });
+      return overallItem ? [overallItem, ...checkpointItems] : checkpointItems;
+    }
+
+    function renderReferenceQueuePanel(row, targetGroup, referenceView) {
+      const sourceGroup = abEvalRelationGroups(row).find((group) => group.id === referenceView.sourceGroupId);
+      const rawItems = sourceGroup ? referenceQueueItems(row, sourceGroup) : [];
+      const activeItem = rawItems.find((item) => item.key === referenceView.activeKey);
+      const items = activeItem
+        ? [activeItem, ...rawItems.filter((item) => item.key !== referenceView.activeKey)]
+        : rawItems;
+      return `
+        <div class="ab-image-checkpoint-panel ab-reference-queue-panel">
+          <span class="ab-image-checkpoint-title">${escapeHtml(sourceGroup?.label || "模型")} · 参考答案队列</span>
+          <div class="ab-image-checkpoint-list">
+            ${items.map((item) => `
+              <div class="ab-image-checkpoint-item ${item.key === referenceView.activeKey ? "active" : ""}">
+                <div class="ab-image-checkpoint-main">
+                  <span class="ab-image-checkpoint-index">${escapeHtml(item.dimension)}</span>
+                  <span class="ab-image-checkpoint-text">${escapeHtml(item.text)}</span>
+                </div>
+                ${item.key.endsWith(":overall") ? "" : `<textarea class="ab-image-checkpoint-edit" rows="1" aria-label="作业人确认修改">${escapeHtml(item.worker || item.text || "待确认")}</textarea>`}
+                <div class="ab-image-checkpoint-refs">
+                  <button type="button" class="ab-checkpoint-reference-btn ${item.key === referenceView.activeKey ? "active" : ""}" data-action="select-ab-reference" data-target-group-id="${escapeAttr(targetGroup.id)}" data-source-group-id="${escapeAttr(sourceGroup?.id || "")}" data-reference-key="${escapeAttr(item.key)}" data-reference-image="${escapeAttr(item.imageUrl)}" data-reference-title="${escapeAttr(item.title || `${item.dimension} · 参考答案`)}">参考答案</button>
+                  ${item.evidenceUrl ? `<a href="${escapeAttr(item.evidenceUrl)}" target="_blank" rel="noopener">依据链接</a>` : `<span>依据链接</span>`}
+                </div>
               </div>
-              <div class="content ab-result-content" data-role="ab-result" data-group-id="${escapeAttr(group.id)}"></div>
+            `).join("") || `<div class="ab-image-checkpoint-item"><span class="ab-image-checkpoint-text">暂无参考答案</span></div>`}
+          </div>
+        </div>
+      `;
+    }
+
+    function activeReferenceForSource(row, sourceGroupId) {
+      const groups = abEvalRelationGroups(row);
+      const targetGroupId = groups
+        .map((item) => item.id)
+        .find((groupId) => state.abReferenceViews[groupId]?.sourceGroupId === sourceGroupId);
+      if (!targetGroupId) return null;
+      return {
+        targetGroup: groups.find((item) => item.id === targetGroupId) || null
+      };
+    }
+
+    function renderReferenceSourcePanel(sourceGroup, activeReference) {
+      return `
+        <div class="ab-image-checkpoint-panel ab-reference-source-panel">
+          <span class="ab-image-checkpoint-title">${escapeHtml(sourceGroup.label || sourceGroup.resultLabel || "模型")} · 考点内容</span>
+          <div class="ab-reference-source-note">
+            <span>参考答案已在${escapeHtml(activeReference.targetGroup?.label || "另一侧")}显示</span>
+            <button type="button" data-action="restore-ab-result" data-group-id="${escapeAttr(activeReference.targetGroup?.id || "")}">退出参考答案</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderImageCheckpointPanel(row, group) {
+      const referenceView = state.abReferenceViews[group.id];
+      if (referenceView) return "";
+      const activeReference = activeReferenceForSource(row, group.id);
+      if (activeReference) return renderReferenceSourcePanel(group, activeReference);
+      const checkpointGroups = imageCheckpointGroups(group);
+      const overallItem = overallReferenceItem(row, group);
+      if (!checkpointGroups.length && !overallItem) return "";
+      return `
+        <div class="ab-image-checkpoint-panel">
+          <div class="ab-image-checkpoint-head">
+            <span class="ab-image-checkpoint-title">${escapeHtml(group.label || group.resultLabel || "模型")} · 考点内容</span>
+            ${overallItem ? `
+              <div class="ab-image-checkpoint-refs ab-image-checkpoint-head-refs">
+                <button type="button" class="ab-checkpoint-reference-btn" data-reference-image="${escapeAttr(overallItem.imageUrl)}" data-group-id="${escapeAttr(group.id)}" data-reference-key="${escapeAttr(overallItem.key)}" data-reference-title="${escapeAttr(overallItem.title)}">参考答案</button>
+                ${overallItem.evidenceUrl ? `<a href="${escapeAttr(overallItem.evidenceUrl)}" target="_blank" rel="noopener">依据链接</a>` : `<span>依据链接</span>`}
+              </div>
+            ` : ""}
+          </div>
+          ${checkpointGroups.map((item) => `
+            <section class="ab-image-dimension">
+              <div class="ab-image-checkpoint-list">
+                ${(Array.isArray(item.checkpoints) ? item.checkpoints : []).map((checkpoint, index) => renderImageCheckpointItem(checkpoint, item.dimension || "考点", group.id, index)).join("")}
+              </div>
+            </section>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    function renderImageCheckpointItem(checkpoint, dimension, groupId, index) {
+      const data = typeof checkpoint === "object" && checkpoint !== null
+        ? checkpoint
+        : { text: String(checkpoint || "") };
+      const text = String(data.text || data.title || "").trim();
+      const machine = String(data.machineResult || data.result || text || "待确认").trim();
+      const worker = String(data.workerResult || machine).trim();
+      const referenceImage = String(data.referenceImage || data.referenceImageUrl || "").trim();
+      const referenceUrl = String(data.referenceUrl || data.evidenceUrl || "").trim();
+      return `
+        <div class="ab-image-checkpoint-item">
+          <div class="ab-image-checkpoint-main">
+            <span class="ab-image-checkpoint-index">${escapeHtml(dimension)}</span>
+            <span class="ab-image-checkpoint-text">${escapeHtml(text)}</span>
+          </div>
+          <textarea class="ab-image-checkpoint-edit" rows="1" aria-label="作业人确认修改">${escapeHtml(worker)}</textarea>
+          <div class="ab-image-checkpoint-refs">
+            <button type="button" class="ab-checkpoint-reference-btn" data-reference-image="${escapeAttr(referenceImage)}" data-group-id="${escapeAttr(groupId)}" data-reference-key="${escapeAttr(`${groupId}:${dimension}:${index}`)}" data-reference-title="${escapeAttr(`${dimension} · 参考答案`)}">参考答案</button>
+            ${referenceUrl ? `<a href="${escapeAttr(referenceUrl)}" target="_blank" rel="noopener">依据链接</a>` : `<span>依据链接</span>`}
+          </div>
+        </div>
+      `;
+    }
+
+    function abGroupPreviewImage(group) {
+      const directUrl = Array.isArray(group?.imageUrls) ? String(group.imageUrls[0] || "") : "";
+      if (directUrl) return directUrl;
+      const token = Array.isArray(group?.imageTokens) ? String(group.imageTokens[0] || "") : "";
+      return token ? cellImageUrl(token) : "";
+    }
+
+    function activeAbReferenceView() {
+      const entry = Object.entries(state.abReferenceViews).find(([, view]) => view);
+      return entry ? { targetGroupId: entry[0], view: entry[1] } : null;
+    }
+
+    function abReferenceKeySuffix(key) {
+      const value = String(key || "");
+      const separatorIndex = value.indexOf(":");
+      return separatorIndex >= 0 ? value.slice(separatorIndex + 1) : value;
+    }
+
+    function renderAbReferenceWorkspace(row, groups, activeReference) {
+      const selectedGroup = groups.find((group) => group.id === activeReference.view.sourceGroupId) || groups[0];
+      const items = selectedGroup ? referenceQueueItems(row, selectedGroup) : [];
+      const activeSuffix = abReferenceKeySuffix(activeReference.view.activeKey);
+      const activeItem = activeSuffix
+        ? items.find((item) => abReferenceKeySuffix(item.key) === activeSuffix)
+        : null;
+      $("compareGrid").classList.add("reference-workspace-active");
+      $("compareGrid").innerHTML = `
+        <div class="ab-reference-workspace">
+          <section class="ab-reference-model-stack" aria-label="模型图片选择">
+            ${groups.map((group) => {
+              const selected = group.id === selectedGroup?.id;
+              const imageUrl = abGroupPreviewImage(group);
+              const view = abImageView(group.id);
+              return `
+                <button type="button" class="ab-reference-model-card ${selected ? "active" : ""}" data-action="select-ab-reference-model" data-group-id="${escapeAttr(group.id)}" data-target-group-id="${escapeAttr(activeReference.targetGroupId)}" aria-pressed="${selected}">
+                  <span class="ab-reference-model-label">${escapeHtml(group.label || group.resultLabel || "模型")}</span>
+                  ${imageUrl ? `
+                    <span class="ab-image-viewport ab-reference-model-viewport ${view.zoom > 1.01 ? "is-zoomed" : ""}" data-ab-image-view-key="${escapeAttr(group.id)}" style="${abImageViewStyle(group.id)}">
+                      <span class="media-grid ab-zoom-grid">
+                        <img src="${escapeAttr(imageUrl)}" alt="${escapeAttr(group.label || "模型")}作业图" loading="lazy" decoding="async" draggable="false">
+                      </span>
+                    </span>
+                  ` : `<span class="empty">${escapeHtml(group.result || "暂无模型图片")}</span>`}
+                </button>
+              `;
+            }).join("")}
+          </section>
+          <section class="ab-reference-checkpoint-pane">
+            <div class="ab-reference-result-head">
+              <span>${escapeHtml(selectedGroup?.label || "模型")} · 考点与参考图</span>
+              <button type="button" data-action="restore-ab-result" data-group-id="${escapeAttr(activeReference.targetGroupId)}">返回对比模式</button>
             </div>
-            ${remark ? `
+            <div class="ab-reference-waterfall">
+              ${items.map((item) => {
+                const expanded = item.key === activeItem?.key;
+                return `
+                  <article class="ab-reference-accordion-item ${expanded ? "expanded" : ""}">
+                    <button type="button" class="ab-reference-accordion-trigger" data-action="select-ab-reference" data-target-group-id="${escapeAttr(activeReference.targetGroupId)}" data-source-group-id="${escapeAttr(selectedGroup?.id || "")}" data-reference-key="${escapeAttr(item.key)}" data-reference-image="${escapeAttr(item.imageUrl)}" data-reference-title="${escapeAttr(item.title || `${item.dimension} · 参考答案`)}" aria-expanded="${expanded}">
+                      <span class="ab-reference-accordion-copy">
+                        <strong>${escapeHtml(item.dimension)}</strong>
+                        <span>${escapeHtml(item.text)}</span>
+                      </span>
+                      <span class="ab-reference-accordion-chevron" aria-hidden="true">${expanded ? "−" : "+"}</span>
+                    </button>
+                    ${item.key.endsWith(":overall") ? "" : `<textarea class="ab-image-checkpoint-edit ab-reference-accordion-edit" rows="1" aria-label="作业人确认修改">${escapeHtml(item.worker || item.text || "待确认")}</textarea>`}
+                    ${expanded ? `
+                      <div class="ab-reference-accordion-body">
+                        ${item.imageUrl ? `<img src="${escapeAttr(item.imageUrl)}" alt="${escapeAttr(item.title || `${item.dimension}参考图`)}" loading="lazy" decoding="async">` : `<div class="empty">暂无参考答案图</div>`}
+                        ${item.evidenceUrl ? `<a class="ab-reference-evidence-link" href="${escapeAttr(item.evidenceUrl)}" target="_blank" rel="noopener">查看依据链接</a>` : ""}
+                      </div>
+                    ` : ""}
+                  </article>
+                `;
+              }).join("") || `<div class="empty">暂无考点内容</div>`}
+            </div>
+          </section>
+        </div>
+      `;
+    }
+
+    function renderAbReferenceCompareColumn(row, group) {
+      const imageZoomingClass = abImageView(group.id).zoom > 1.01 ? " image-zooming" : "";
+      const referenceView = state.abReferenceViews[group.id];
+      const referenceSource = activeReferenceForSource(row, group.id);
+      const modeClass = referenceView
+        ? " reference-waterfall-mode"
+        : referenceSource
+          ? " reference-source-mode"
+          : " compare-mode";
+      return `
+        <div class="compare-col ab-eval-col ab-reference-target-col${imageZoomingClass}${modeClass}" data-group-id="${escapeAttr(group.id)}">
+          <div class="block ab-relation-block">
+            <div class="block-title">
+              <span>${escapeHtml(group.resultLabel)}</span>
+              <span class="chip pe">当前生图结果</span>
+            </div>
+            <div class="content ab-result-content" data-role="ab-result" data-group-id="${escapeAttr(group.id)}"></div>
+          </div>
+          ${renderImageCheckpointPanel(row, group)}
+          ${(() => {
+            const remark = abRemarkForGroup(row, group);
+            return remark ? `
               <div class="ab-remark-inline">
                 <span class="ab-remark-title">${escapeHtml(remark.title)}</span>
                 <textarea data-role="ab-remark" data-column="${escapeAttr(remark.column)}" placeholder="填写${escapeAttr(group.label)}备注">${escapeHtml(remark.value)}</textarea>
               </div>
-            ` : ""}
-          </div>
-        `;
-      }).join("");
+            ` : "";
+          })()}
+        </div>
+      `;
+    }
 
+    function renderAbReferenceAnswerColumn(row, group) {
+      const referenceData = normalizeReferenceAnswerData(row);
+      const summary = String(referenceData?.summary || "").trim();
+      const selectedKey = getSelectedAbReferenceKey(row);
+      const overallHtml = !selectedKey && referenceData?.overall ? `
+        <section class="ab-reference-section">
+          <div class="ab-reference-section-title">整体答案</div>
+          ${renderAbReferenceFigure(referenceData.overall)}
+        </section>
+      ` : "";
+      const matchedSections = (Array.isArray(referenceData?.sections) ? referenceData.sections : []).filter((section) => {
+        if (!selectedKey) return true;
+        return normalizeReferenceSectionKey(section.title) === selectedKey;
+      });
+      return `
+        <div class="compare-col ab-eval-col ab-reference-answer-col">
+          <div class="block ab-relation-block">
+            <div class="block-title">
+              <span>参考答案</span>
+              <span class="chip pe">${escapeHtml(group.label || group.resultLabel || "当前模型")} ↔ 参考</span>
+            </div>
+            <div class="content ab-reference-column-content">
+              ${summary ? `<div class="ab-reference-summary">${escapeHtml(summary)}</div>` : ""}
+              ${overallHtml}
+              ${matchedSections.map((section) => `
+                <section class="ab-reference-section">
+                  <div class="ab-reference-section-title">${escapeHtml(section.title || "考点参考")}</div>
+                  <div class="ab-reference-points">
+                    ${(Array.isArray(section.items) ? section.items : []).map(renderAbReferencePoint).join("")}
+                  </div>
+                </section>
+              `).join("") || `<div class="ab-reference-body"><span class="placeholder">当前考点暂无参考答案</span></div>`}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderAbEvalDynamicRelation(row) {
+      const groups = abEvalRelationGroups(row);
+      const activeReference = activeAbReferenceView();
+      if (activeReference) {
+        renderAbReferenceWorkspace(row, groups, activeReference);
+        return;
+      }
+      $("compareGrid").classList.remove("reference-workspace-active");
+      $("compareGrid").innerHTML = groups.map((group) => renderAbReferenceCompareColumn(row, group)).join("");
       groups.forEach((group) => {
         renderAbImages(
           $("compareGrid").querySelector(`[data-role="ab-result"][data-group-id="${CSS.escape(group.id)}"]`),
           group.imageTokens,
-          group.result
+          group.result,
+          group
         );
       });
     }
@@ -2168,6 +2957,97 @@
     }
 
     function handlePromptComparisonClick(event) {
+      const restoreButton = event.target.closest("[data-action='restore-ab-result']");
+      if (restoreButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        const groupId = restoreButton.dataset.groupId || "";
+        if (groupId) delete state.abReferenceViews[groupId];
+        renderAbEvalDynamicRelation(currentRow());
+        return;
+      }
+      const referenceModelImage = event.target.closest(".ab-reference-model-card .ab-reference-model-viewport img");
+      if (referenceModelImage) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (state.abImageSuppressClick) {
+          state.abImageSuppressClick = false;
+          return;
+        }
+        openImageViewer(referenceModelImage.src, referenceModelImage.alt);
+        return;
+      }
+      const referenceModelButton = event.target.closest("[data-action='select-ab-reference-model']");
+      if (referenceModelButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (state.abImageSuppressClick) {
+          state.abImageSuppressClick = false;
+          return;
+        }
+        const targetGroupId = referenceModelButton.dataset.targetGroupId || "";
+        const sourceGroupId = referenceModelButton.dataset.groupId || "";
+        if (!targetGroupId || !sourceGroupId) return;
+        const currentView = state.abReferenceViews[targetGroupId] || {};
+        const row = currentRow();
+        const sourceGroup = abEvalRelationGroups(row).find((group) => group.id === sourceGroupId);
+        const items = sourceGroup ? referenceQueueItems(row, sourceGroup) : [];
+        const activeSuffix = abReferenceKeySuffix(currentView.activeKey);
+        const matchingItem = activeSuffix
+          ? items.find((item) => abReferenceKeySuffix(item.key) === activeSuffix)
+          : null;
+        state.abReferenceViews[targetGroupId] = {
+          ...currentView,
+          imageUrl: matchingItem?.imageUrl || "",
+          title: matchingItem?.title || (matchingItem ? `${matchingItem.dimension} · 参考答案` : currentView.title || "参考答案"),
+          sourceGroupId,
+          activeKey: matchingItem?.key || ""
+        };
+        renderAbEvalDynamicRelation(currentRow());
+        return;
+      }
+      const referenceQueueButton = event.target.closest("[data-action='select-ab-reference']");
+      if (referenceQueueButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        const targetGroupId = referenceQueueButton.dataset.targetGroupId || "";
+        const imageUrl = referenceQueueButton.dataset.referenceImage || "";
+        const referenceKey = referenceQueueButton.dataset.referenceKey || "";
+        if (!targetGroupId) return;
+        const currentView = state.abReferenceViews[targetGroupId] || {};
+        const collapsing = currentView.activeKey === referenceKey;
+        state.abReferenceViews[targetGroupId] = {
+          imageUrl: collapsing ? "" : imageUrl,
+          title: referenceQueueButton.dataset.referenceTitle || "参考答案",
+          sourceGroupId: referenceQueueButton.dataset.sourceGroupId || currentView.sourceGroupId || "",
+          activeKey: collapsing ? "" : referenceKey
+        };
+        renderAbEvalDynamicRelation(currentRow());
+        return;
+      }
+      const referenceButton = event.target.closest("[data-reference-image]");
+      if (referenceButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        const imageUrl = referenceButton.dataset.referenceImage || "";
+        if (imageUrl) {
+          const sourceGroupId = referenceButton.dataset.groupId || "";
+          const groups = abEvalRelationGroups(currentRow());
+          const targetGroup = groups.find((group) => group.id !== sourceGroupId) || groups[0];
+          if (!targetGroup) return;
+          state.abReferenceViews = {};
+          state.abReferenceViews[targetGroup.id] = {
+            imageUrl,
+            title: referenceButton.dataset.referenceTitle || "参考答案",
+            sourceGroupId,
+            activeKey: referenceButton.dataset.referenceKey || ""
+          };
+          renderAbEvalDynamicRelation(currentRow());
+        } else {
+          toast("暂无参考答案图");
+        }
+        return;
+      }
       const confirmButton = event.target.closest("[data-action='confirm-machine-check']");
       if (confirmButton) {
         event.preventDefault();
